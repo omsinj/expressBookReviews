@@ -1,67 +1,76 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-let books = require("./booksdb.js");
-const regd_users = express.Router();
+const books = require('./booksdb.js');
+const registered_users = express.Router();
 
-let users = [];
+const users = [];
 
-const isValid = (username)=>{ 
-    let existingUser = users.filter((user)=>{ return user.username === username });
-    return existingUser.length > 0;
+const isValid = (username) => {
+  return users.every(user => user.username !== username);
 }
 
-const authenticatedUser = (username,password)=>{ 
-    let validUsers = users.filter((user)=>{
-        return (user.username === username && user.password === password)
-    });    
-    return validUsers.length > 0;
+const authenticatedUser = (username, password) => {
+  return users.some(user => user.username === username && user.password === password);
 }
 
-regd_users.post("/login", (req,res) => {
+// Only registered users can log in
+registered_users.post('/login', (req, res) => {
   const username = req.body.username;
-  const password = req.body.password;  
+  const password = req.body.password;
 
-  if (!username || !password) 
-      return res.status(404).json({message: "Error logging in"});
-  
+  if (!username || !password) {
+    return res.status(401).json({ message: 'Error logging in. No username/password provided' });
+  }
+
   if (authenticatedUser(username, password)) {
-    let accessToken = jwt.sign({ data: {username: username, password: password}}, 'access', { expiresIn: 60 * 60 });
-    req.session.authorization = { accessToken, username};    
-    return res.status(200).send({accessToken: accessToken});
+    let accessToken = jwt.sign({
+      data: password
+    }, 'access', { expiresIn: 60 * 60 });
+
+    req.session.authorization = {
+      accessToken, username
+    }
+    return res.status(200).json({ message: 'User successfully logged in' });
   } else {
-    return res.status(208).json({message: "Invalid Login. Check username and password"});
+    return res.status(401).json({ message: 'Invalid Login. Check username and password' });
   }
 });
 
-// Add a book review
-// Hint: You have to give a review as a request query & it must get posted with 
-// the username  (stored in the session) posted
-// review as a request query (but PUT request)?? something is not clear here
-regd_users.put("/auth/review/:isbn", (req, res) => {
-  let book = books[req.params.isbn];
-  let username = req.user.data.username;
-  if(!book)
-        return res.status(300).json({message: "Unable to find the book"});
+registered_users.use('/auth/review/:isbn', (req, res, next) => {
+  const isbn = req.params.isbn;
 
-   if(!req.body.comment)
-        return res.status(300).json({message: "Review should be provided"});
-
-    book.reviews[username] = req.body.comment; 
-   
-   res.send("The review on book " + (' ')+ (req.params.isbn) + " has been added!")    
+  if (!books[isbn]) {
+    return res.status(404).json({ message: `The book is not found by ISBN: ${isbn}` });
+  }
+  next();
 });
 
-regd_users.delete("/auth/review/:isbn", (req, res) => {   
-    let book = books[req.params.isbn];
-    let username = req.user.data.username;
-    if(!book)
-        return res.status(300).json({message: "Unable to find the book"});
-    
-    delete book.reviews[username]; 
+// Add a book review
+registered_users.put('/auth/review/:isbn', (req, res) => {
+  const username = req.session.authorization.username;
+  const review = req.query.review;
+  const book = books[req.params.isbn];
 
-    return res.status(200).json({message: "Book review removed successful"});
-})
+  if (!review) {
+    return res.status(400).json({ message: 'Bad request. No review provided' });
+  }
 
-module.exports.authenticated = regd_users;
+  const isNewReview = !book.reviews[username];
+  book.reviews[username] = review;
+
+  return res.status(200).json({ message: `Review was ${isNewReview ? 'added' : 'updated'}` });
+});
+
+// Delete a book review
+registered_users.delete('/auth/review/:isbn', (req, res) => {
+  const username = req.session.authorization.username;
+  const isbn = req.params.isbn;
+
+  delete books[isbn].reviews[username];
+
+  return res.status(200).json({ message: 'Review deleted' });
+});
+
+module.exports.authenticated = registered_users;
 module.exports.isValid = isValid;
 module.exports.users = users;
